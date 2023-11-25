@@ -93,7 +93,7 @@ export YARN_NODEMANAGER_USER=root
        </property>
    ```
 
-   确保web界面的修改有权限
+   web界面操作的用户
    
    ```xml
        <!-- 配置HDFS网页登录使用的静态用户为root -->
@@ -297,13 +297,19 @@ services:
 
 ## HDFS format
 
-首次启动HDFS时，必须对其进行格式化操作，foramt本质上是初始化，对HDFS清理和准备工作
+首次启动HDFS时，必须对其进行格式化操作，foramt本质上进行准备工作，生成ClusterId
 
 在`nameode`所在的节点进行格式化：
 
 ```sh
 hdfs namenode -format
 ```
+
+format HDFS时，namenode和datanode将生成相同的集群id
+
+<img src="assets/image-20231125170816891.png" alt="image-20231125170816891" style="zoom:50%;" />
+
+如果再次format ，namenode将生成新的id，但是datanode依旧保留原来的id。此时namenode和datanode相当于在不同的集群中。为此我们需要删除datanode中的配置信息。再进行foramt操作即可生成相同的id
 
 ## hdfs启动
 
@@ -417,7 +423,7 @@ mapred --daemon start historyserver
 
 ## 时间同步
 
-服务器间时间同步保证一些定时任务能够正常执行
+服务器间的时间并不一定是相同的，服务器间时间同步可以保证一些定时任务能够正常执行
 
 生产环境中如果能够连接外网，则不需要进行时间同步。
 
