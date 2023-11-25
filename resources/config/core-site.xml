@@ -23,7 +23,13 @@
     <description>Abase for other temporary directories.</description>
 </property>
 <property>
-    <name>fs.defaultFS</name>
-    <value>hdfs://master:9000</value>
+  <name>fs.defaultFS</name>
+  <value>hdfs://master:8020</value>
 </property>
+    <!-- 配置HDFS网页登录使用的静态用户为root -->
+    <property>
+      <name>hadoop.http.staticuser.user</name>
+      <value>root</value>
+  </property>
+
 </configuration>

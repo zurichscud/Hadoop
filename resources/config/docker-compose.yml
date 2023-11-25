@@ -1,0 +1,28 @@
+version: "3"
+services:
+  master:
+    container_name: master
+    image: zurichscud/ubuntu-hadoop:1.12
+    hostname: master
+    ports:
+      - 9870:9870 #namenode web 
+      - 19888:19888 # 历史服务器web
+     
+    command: sh -c "/etc/init.d/ssh start;tail -f /dev/null"
+  slave01:
+    image: zurichscud/ubuntu-hadoop:1.12
+    container_name: slave01
+    hostname: slave01
+    ports:
+      - 8088:8088 # resourcemanager web
+      - 9864:9864 # web 依赖
+    command: sh -c "/etc/init.d/ssh start;tail -f /dev/null"
+  slave02:
+    image: zurichscud/ubuntu-hadoop:1.12
+    container_name: slave02
+    hostname: slave02
+    ports:
+      - 9868:9868 #secondarynamenode web
+    command: sh -c "/etc/init.d/ssh start;tail -f /dev/null"
+
+
