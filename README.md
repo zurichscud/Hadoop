@@ -4,3 +4,6 @@ hadoop版本：3.2.4
 jdk版本：open-jdk11
 # hadoop说明
 namenode所在位置：master:9000
+
+# hadoop winutils
+https://github.com/cdarlint/winutils.git

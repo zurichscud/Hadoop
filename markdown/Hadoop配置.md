@@ -254,9 +254,10 @@ services:
     hostname: master
     ports:
       - 9870:9870 #namenode web 
-      - 8020:8020 #namenode
+      - 8020:8020 #namenode的服务端口
       - 10020:10020 #历史服务器
       - 19888:19888 # 历史服务器web
+      - 9866:9866 #datanode的服务端口
      
     command: sh -c "/etc/init.d/ssh start;tail -f /dev/null"
   slave01:
@@ -426,4 +427,39 @@ mapred --daemon start historyserver
 服务器间的时间并不一定是相同的，服务器间时间同步可以保证一些定时任务能够正常执行
 
 生产环境中如果能够连接外网，则不需要进行时间同步。
+
+# IDEA环境设置
+
+## winutils
+
+下载对应版本的hadoop winutils，并设置环境变量HADOOP_HOME，并在PATH中写入
+
+```sh
+$HADOOP_HOME$/bin
+```
+
+点击`winutils.exe`启动 windows客户端
+
+## 依赖注入
+
+```xml
+    <dependencies>
+        <dependency>
+            <groupId>org.apache.hadoop</groupId>
+            <artifactId>hadoop-client</artifactId>
+            <version>3.2.4</version>
+        </dependency>
+        <dependency>
+            <groupId>junit</groupId>
+            <artifactId>junit</artifactId>
+            <version>4.13.1</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-log4j12</artifactId>
+            <version>1.7.36</version>
+        </dependency>
+    </dependencies>
+```
 
