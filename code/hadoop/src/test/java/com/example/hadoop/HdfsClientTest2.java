@@ -99,6 +99,11 @@ public class HdfsClientTest2 {
             System.out.println("是否目录"+status.isDirectory());
             System.out.println("是否文件"+status.isFile());
         }
+    }
+
+    @Test
+    public void wordCount() {
+
 
     }
 }

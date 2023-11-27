@@ -10,6 +10,7 @@ services:
       - 10020:10020 #历史服务器
       - 19888:19888 # 历史服务器web
       - 9866:9866 #datanode的服务端口
+      - 2222:22 #开启ssh端口映射
      
     command: sh -c "/etc/init.d/ssh start;tail -f /dev/null"
   slave01:

@@ -449,11 +449,137 @@ fs.listStatus(path)
 
 
 
-# NN和2NN
+# HDFS读写
+
+## HDFS写入过程
+
+![image-20231127142858039](assets/image-20231127142858039.png)
+
+1. 客户端通过Distributed FileSystem模块向NameNode请求上传文件，NameNode检查目标文件是否已存在，父目录是否存在。
+2. NameNode返回是否可以上传。
+3. 客户端请求第一个 Block上传到哪几个DataNode服务器上。
+4. NameNode根据节点存储策略返回3个DataNode节点地址，分别为dn1、dn2、dn3。
+5. 客户端通过FSDataOutputStream模块请求dn1上传数据，dn1收到请求会继续调用dn2，然后dn2调用dn3，将这个通信管道建立完成。
+6. dn1、dn2、dn3逐级应答客户端。
+7. 客户端开始往dn1上传第一个Block（先从磁盘读取数据放到一个本地内存缓存），以Packet为单位，dn1收到一个Packet就会传给dn2，dn2传给dn3；dn1每传一个packet会放入一个应答队列等待应答。
+8. 当一个Block传输完成之后，客户端再次请求NameNode上传第二个Block的服务器。（重复执行3-7步）。
+
+## rack
+
+机架，一个机架上可以放置多台服务器，一个集群通常由多个机架组成
+
+![image-20231127144344459](assets/image-20231127144344459.png)
+
+node1可以表示为 $d1/rack1/node1$
+
+根据树状结构可以发现节点之间进行通信需要找到他们共同的根节点才能够进行通信。
+
+## 节点存储策略
+
+默认设置的replication=3
+
+namenode选择datanode的策略为：
+
+第一个副本会存储在客户端当前的datanode上，如果是远程操作，则会随机选择一个datanode存储。
+
+第二个副本会选择在不同机架上的上的一个datanode
+
+最后一个副本会选择在相同机架上的不同datanode上
+
+> For the common case, when the replication factor is three, HDFS’s placement policy is to put one replica on the local machine if the writer is on a datanode, otherwise on a random datanode, another replica on a node in a different (remote) rack, and the last on a different node in the same remote rack. This policy cuts the inter-rack write traffic which generally improves write performance. The chance of rack failure is far less than that of node failure; this policy does not impact data reliability and availability guarantees. However, it does reduce the aggregate network bandwidth used when reading data since a block is placed in only two unique racks rather than three. With this policy, the replicas of a file do not evenly distribute across the racks. One third of replicas are on one node, two thirds of replicas are on one rack, and the other third are evenly distributed across the remaining racks. This policy improves write performance without compromising data reliability or read performance.
 
 
+
+这种策略可以最大程度的减少带宽的压力，又能够保证数据的可靠性，因为机架的故障率远小于主机的故障率
+
+## HDFS读取流程
+
+![image-20231127145746845](assets/image-20231127145746845.png)
+
+1. 客户端通过*DistributedFileSystem*向*NameNode*请求下载文件，NameNode通过查询元数据，找到文件块所在的DataNode地址。
+2. 挑选一台DataNode（就近原则，负载均衡策略）服务器，请求读取数据。
+3. DataNode开始传输数据给客户端（从磁盘里面读取数据输入流，以Packet为单位来做校验）。
+4. 客户端以Packet为单位接收，先在本地缓存，然后写入目标文件。
+
+HDFS的读取过程是串行读取。
+
+# NameNode
+
+## 引入
+
+NameNode负责存储元数据。如果将元数据存储在磁盘中，面对频繁的客户端访问效率较低，因此元数据需要存放在内存中，但是内存一旦断电，元数据就会丢失，整个集群就无法工作，因此我们需要在磁盘中备份元数据。
+
+在namenode目录下存在*FsImage*的文件负责对元数据进行备份
+
+但是元数据是一直在变化的，为了确保变化的元数据不会丢失，我们考虑不断对FsImage进行更新，但是FsImage在磁盘中，频繁对FsImage更新会导致效率较低
+
+因此我们引入了*Edits*（日志）文件，用于存储对元数据的操作，元数据不会频繁更新，只会记录对元数据的操作，Edits+FsImage一起执行，将得到最新的元数据。
+
+为避免Edits文件过大，我们需要定时执行FsImage和Edits更新元数据。
+
+通常情况为避免*namenode*的负载过大，我们引入了*SecondaryNameNode*专门用于FsImage和Edits的合并
+
+## NameNode工作机制
+
+![image-20231127170421971](assets/image-20231127170421971.png)
+
+文件后面的序号表示日志文件的序号。一个日志文件有唯一的id标识，日志中可以存储多个操作
+
+- $fsimage\_297$表示该镜像文件是297号日志之前的所有操作执行后得到的元数据
+- $edits\_296-297$表示记录了296号日志到297号日志的归档文件
+- $edits\_inprogress\_298$表示最新的298号日志文件
+- *edits*和*fsimage*一起执行可以生成新的*fsimage*文件
+
+第一阶段：*NameNode*启动
+
+1. 第一次启动NameNode格式化后，创建Fsimage和Edits文件。如果不是第一次启动，直接加载编辑日志和镜像文件到内存。
+2. 客户端对元数据进行增删改的请求。
+3. NameNode记录当前操作至`edits_inprogress`日志中。
+4. 定期或在某些条件下，NameNode 会滚动（roll）编辑日志。滚动后，`edits_inprogress`文件被重命名为 `edits`，表明其中的编辑日志已经完成，并且一个新的 `edits_inprogress` 文件开始用于记录后续的编辑日志。
+5. NameNode在内存中对元数据进行更新，内存中的元数据一定是最新的，磁盘上的元数据只是防止断电后内存中的元数据消失。
+
+第二阶段：*Secondary NameNode*工作
+
+1. Secondary NameNode询问NameNode是否需要CheckPoint。直接带回NameNode的响应。
+2. Secondary NameNode请求执行CheckPoint。
+3. NameNode 执行滚动任务，生成edits。
+4. 将edits和fsimage拷贝到Secondary NameNode。
+5. Secondary NameNode加载编辑日志和镜像文件到内存，并合并。
+6. 生成新的镜像文件fsimage.chkpoint。
+7. 拷贝fsimage.chkpoint到NameNode。
+8. NameNode将`fsimage.chkpoint`重新命名成`fsimage`。
+
+## 查看日志
+
+edits、fsimage本质是xml文件
+
+- 查看edits
+
+```sh
+hdfs oev -p XML -i editsPath -o toPath
+```
+
+```sh
+hdfs oev -p XML -i edits_0000000000000000012-0000000000000000013 -o /opt/module/hadoop-3.1.3/edits.xml
+```
+
+- 查看fsimage
+
+```sh
+hdfs oiv -p XML -i fsimagePath -o toPath
+```
+
+```sh
+hdfs oiv -p XML -i fsimage_0000000000000000025 -o /opt/module/hadoop-3.1.3/fsimage.xml
+```
 
 # DataNode
 
+## DataNode工作机制
 
+<img src="assets/image-20231127194152876.png" alt="image-20231127194152876" style="zoom:50%;" />
 
+- 一个数据块在DataNode上以文件形式存储在磁盘上，包括两个文件，一个是数据本身，一个是元数据包括数据块的长度，块数据的校验和，以及时间戳
+- DataNode启动后向NameNode注册，通过后，周期性（默认配置为**6**小时）的向NameNode上报所有的块信息。
+- DataNode会每3s向NameNode发送心跳信号，表示DataNode还存活（active），NameNode可以将对DataNode的命令封装至心跳信号的reponse中。
+- 当NameNode超过10min30s没有收到DataNode的心跳信号则认为该datanode已宕机
