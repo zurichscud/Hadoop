@@ -12,13 +12,15 @@ import java.io.IOException;
  * @Description: TODO
  */
 public class WordReduce extends Reducer<Text, IntWritable, Text,IntWritable> {
+    @Override
     protected void reduce(Text key,Iterable<IntWritable>values,Context context) throws IOException, InterruptedException {
         int sum=0;
         for (IntWritable value : values) {
             sum=sum+value.get();
         }
         context.write(key, new IntWritable(sum));
+        System.out.println("############################");
         System.out.println(key.toString() + ": " + sum);
-
+        System.out.println("############################");
     }
 }

@@ -48,13 +48,19 @@ MapReduce无法像MySQL一样，在毫秒或者秒级内返回结果。
 
 统计一个文件中的单词出现次数，且a-p开头的字母一个文件，q-z开头的字母一个文件
 
+
+
 ![image-20231127205410483](assets/image-20231127205410483.png)
+
+相同的key聚集为一组，调用一次reduce。reduce服务器数量由人决定。默认的配置为1台reduce服务器
 
 分布式计算需要2个阶段：
 
 - *Map*
 
 映射，Map阶段会并发MapTask，互不影响
+
+Map得到结果会暂存在内存中的缓冲区中，当达到上限会写入硬盘
 
 - *Reduce*
 
@@ -64,7 +70,15 @@ MapReduce无法像MySQL一样，在毫秒或者秒级内返回结果。
 
 切片，一个split对应一个mapTask，默认一个切片的Szie与HDFS的blockSize相同，可以根据实际情况设置split的大小。不同数量的split将影响MapTask的数量
 
+- *Shuffler*
 
+洗牌，将Map得到的文件在内存中进行排序，每一个文件内部是有序的
+
+- *partition*
+
+分区，一个分区可以存在多个组，相同的key分区号相同。排序P->Key
+
+![image-20231128000627589](assets/image-20231128000627589.png)
 
 ## MapReduce进程
 
@@ -80,18 +94,182 @@ MapReduce无法像MySQL一样，在毫秒或者秒级内返回结果。
 
 Hadoop中使用的是自己的数据类型，与Java中的类型的关系：
 
-| **Java****类型** | **Hadoop Writable****类型** |
-| ---------------- | --------------------------- |
-| Boolean          | BooleanWritable             |
-| Byte             | ByteWritable                |
-| Int              | IntWritable                 |
-| Float            | FloatWritable               |
-| Long             | LongWritable                |
-| Double           | DoubleWritable              |
-| String           | Text                        |
-| Map              | MapWritable                 |
-| Array            | ArrayWritable               |
-| Null             | NullWritable                |
+| **Java**类型 | *Hadoop Writable*类型 |
+| ------------ | --------------------- |
+| Boolean      | BooleanWritable       |
+| Byte         | ByteWritable          |
+| Int          | IntWritable           |
+| Float        | FloatWritable         |
+| Long         | LongWritable          |
+| Double       | DoubleWritable        |
+| String       | Text                  |
+| Map          | MapWritable           |
+| Array        | ArrayWritable         |
+| Null         | NullWritable          |
 
-## MapReduce 编程规范
+# MapReduce 编程规范
 
+## KEY-VALUE一览
+
+![image-20231128214944363](assets/image-20231128214944363.png)
+
+## Path类
+
+在mapreduce的编程中需要将路径全部创建成一个对象，
+
+```java
+new Path(path)
+```
+
+- path：*String*，路径
+
+支持两种路径：本地路径（jar当前的运行环境），hdfs路径
+
+本地路径格式：需要使用绝对路径，支持Windows和Linux的路径
+
+```java
+/input/helloworld.txt
+```
+
+hdfs路径格式：需要指明namenode的主机名称
+
+```java
+hdfs://namenode:8020/user/hadoop/input/data.txt
+```
+
+## Mapper
+
+我们需要编写一个mapper类继承Mapper，并重写map方法。
+
+```java
+public class Mapper<KEYIN, VALUEIN, KEYOUT, VALUEOUT> 
+```
+
+- KEYIN：map阶段，输入的key的类型
+- VALUEIN：map阶段，输入的value类型
+- KEYOUT：map阶段。输出的key的类型
+- VALUEOUT：map阶段，输出的value类型
+
+类型需要使用Hadoop 中定义的类型
+
+---
+
+```java
+void map( key,  value, context) 
+```
+
+- key：*KEYIN*，输入的key
+- value：*VALUEIN*，输入的value
+- context：*Context*，上下文，用于连接reduce
+
+context中存在方法write用于输出mapper阶段的结果
+
+```java
+context.write(KEYOUT,VALUEOUT)
+```
+
+> **Example**
+>
+> ```java
+> public class WordMap extends Mapper<LongWritable, Text,Text, IntWritable> {
+>     @Override
+>     protected void map(LongWritable key, Text value, Context context) throws IOException, InterruptedException {
+>         String[] lines = value.toString().split(" ");
+>         for (String word : lines) {
+>             context.write(new Text(word),new IntWritable(1));
+>         }
+>     }
+> }
+> ```
+>
+> 
+
+## Reducer
+
+Reducer将Mapper阶段得到的结果聚合
+
+我们需要编写一个reducer继承*Reducer*，且重写reduce方法
+
+```java
+public class Reducer<KEYIN,VALUEIN,KEYOUT,VALUEOUT>
+```
+
+- KEYIN：reduce阶段，输入的key的类型
+- VALUEIN：reduce阶段，输入的value类型
+- KEYOUT：reduce阶段。输出的key的类型
+- VALUEOUT：reduce阶段，输出的value类型
+
+---
+
+```java
+void reduce( key, Iterable<VALUEIN> values, Context context) 
+```
+
+- key：*KEYIN*，输入的key
+- values：*Iterable<VALUEIN>*，该key的所有value值
+- context：*Context*，上下文，用于写出reduce的结果
+
+context中存在方法write用于输出reduce阶段的结果
+
+通过实现 `Iterable` 接口，表明`values`是可迭代的，即可以使用增强的 for 循环或者显式地使用迭代器来遍历其元素。
+
+> **Example**
+>
+> ```java
+> public class WordReduce extends Reducer<Text, IntWritable, Text,IntWritable> {
+>     @Override
+>     protected void reduce(Text key,Iterable<IntWritable>values,Context context) throws IOException, InterruptedException {
+>         int sum=0;
+>         for (IntWritable value : values) {
+>             sum=sum+value.get();
+>         }
+>         context.write(key, new IntWritable(sum));
+>         System.out.println("############################");
+>         System.out.println(key.toString() + ": " + sum);
+>         System.out.println("############################");
+>     }
+> }
+> ```
+>
+> 
+
+
+
+## Main
+
+Main是程序的入口，也称为驱动
+
+表示是否在控制台打印作业进度信息
+
+```java
+job.waitForCompletion(true);
+```
+
+> **Example**
+>
+> ```java
+> public class WordMain {
+>     public static void main(String[] args) throws IOException, InterruptedException, ClassNotFoundException {
+> 
+>         Configuration config = new Configuration();
+>         Job job = Job.getInstance(config);
+>         job.setJarByClass(WordMain.class);
+>         job.setMapperClass(WordMap.class);
+>         job.setReducerClass(WordReduce.class);
+>         //map输出的kv类型
+>         job.setMapOutputKeyClass(Text.class);
+>         job.setMapOutputValueClass(IntWritable.class);
+> 
+>         //最终的K,V
+>         job.setOutputKeyClass(Text.class);
+>         job.setOutputValueClass(IntWritable.class);
+>         //设置输入和输出的Format路径
+>         FileInputFormat.setInputPaths(job, new Path("hdfs://master:8020/myword.txt"));
+>         FileOutputFormat.setOutputPath(job, new Path("hdfs://master/output"));
+>         //提交job
+>         boolean result = job.waitForCompletion(true);
+>         System.exit(result?0:1);
+>     }
+> ```
+>
+> 

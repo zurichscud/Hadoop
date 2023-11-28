@@ -463,3 +463,9 @@ $HADOOP_HOME$/bin
     </dependencies>
 ```
 
+## java.lang.UnsatisfiedLinkError
+
+创建org.apache.hadoop.io.nativeio包，并创建`NativeIO`类
+
+代码见resources
+
