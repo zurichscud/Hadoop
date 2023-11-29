@@ -28,12 +28,12 @@ public class WordMain {
         job.setMapOutputKeyClass(Text.class);
         job.setMapOutputValueClass(IntWritable.class);
 
-        //最终的K,V
+        //reduce的K,V
         job.setOutputKeyClass(Text.class);
         job.setOutputValueClass(IntWritable.class);
         //设置输入和输出的Format路径
-        FileInputFormat.setInputPaths(job, new Path("hdfs://master:8020/myword.txt"));
-        FileOutputFormat.setOutputPath(job, new Path("hdfs://master/output"));
+        FileInputFormat.setInputPaths(job, new Path("/usr/hello.txt"));
+        FileOutputFormat.setOutputPath(job, new Path("/output"));
         //提交job
         boolean result = job.waitForCompletion(true);
         System.exit(result?0:1);

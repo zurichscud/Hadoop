@@ -2,7 +2,7 @@
 
 ## MapReduce定义
 
-MapReduce是一个分布式运算程序的编程框架，是用户开发“基于Hadoop的数据分析应用”的核心框架。
+MapReduce是一个分布式计算程序的编程框架。
 
 MapReduce核心功能是将用户编写的业务逻辑代码和自带默认组件整合成一个完整的分布式运算程序，并发运行在一个Hadoop集群上。
 
@@ -41,6 +41,10 @@ MapReduce无法像MySQL一样，在毫秒或者秒级内返回结果。
 ![image-20231127204136611](assets/image-20231127204136611.png)
 
 多个应用程序存在依赖关系，后一个应用程序的输入为前一个的输出。在这种情况下，每个MapReduce作业的输出结果都会写入到磁盘，会造成大量的磁盘IO，导致性能非常的低下。常用*Flask*
+
+## 数据集
+
+适合使用MapReduce处理的数据集需要满足一个前置条件：待处理的数据集可以分解成许多小的数据集，而且每一个小数据集都可以完全并行处理
 
 ## MapReduce 核心思想
 
@@ -85,8 +89,10 @@ Map得到结果会暂存在内存中的缓冲区中，当达到上限会写入�
 一个完整的**MapReduce**程序在分布式运行时有三类实例进程：
 
 - **MrAppMaster**：负责整个程序的过程调度及状态协调。（Mr是MapReduce的缩写，也称*Job*）
-- **MapTask**：负责Map阶段的整个数据处理流程。
+- **MapTask**：负责Map阶段的整个数据处理流程。MapTask得到的结果存储在磁盘中
 - **ReduceTask**：负责Reduce阶段的整个数据处理流程。
+
+执行ReduceTask前需要完成MapTask
 
 一个MapReduce编程模型只能包含一个Map阶段和Reduce阶段。如果用户的业务非常复杂，需要编写多个MapReduce程序
 
@@ -109,6 +115,8 @@ Hadoop中使用的是自己的数据类型，与Java中的类型的关系：
 
 # MapReduce 编程规范
 
+
+
 ## KEY-VALUE一览
 
 ![image-20231128214944363](assets/image-20231128214944363.png)
@@ -123,23 +131,15 @@ new Path(path)
 
 - path：*String*，路径
 
-支持两种路径：本地路径（jar当前的运行环境），hdfs路径
+支持两种路径：本地路径(`file:///`)，hdfs路径(`hdfs:///`)
 
 本地路径格式：需要使用绝对路径，支持Windows和Linux的路径
 
-```java
-/input/helloworld.txt
-```
-
-hdfs路径格式：需要指明namenode的主机名称
-
-```java
-hdfs://namenode:8020/user/hadoop/input/data.txt
-```
+在不同的命令中，路径的默认转换会有不同，防止出错可以直接指定协议类型
 
 ## Mapper
 
-我们需要编写一个mapper类继承Mapper，并重写map方法。
+我们需要编写一个mapper类继承Mapper，并重写map方法。每一行将调用一次map方法
 
 ```java
 public class Mapper<KEYIN, VALUEIN, KEYOUT, VALUEOUT> 
@@ -188,7 +188,7 @@ context.write(KEYOUT,VALUEOUT)
 
 Reducer将Mapper阶段得到的结果聚合
 
-我们需要编写一个reducer继承*Reducer*，且重写reduce方法
+我们需要编写一个reducer继承*Reducer*，且重写reduce方法。相同的key调用一次reduce方法。
 
 ```java
 public class Reducer<KEYIN,VALUEIN,KEYOUT,VALUEOUT>
@@ -264,8 +264,8 @@ job.waitForCompletion(true);
 >         job.setOutputKeyClass(Text.class);
 >         job.setOutputValueClass(IntWritable.class);
 >         //设置输入和输出的Format路径
->         FileInputFormat.setInputPaths(job, new Path("hdfs://master:8020/myword.txt"));
->         FileOutputFormat.setOutputPath(job, new Path("hdfs://master/output"));
+>            FileInputFormat.setInputPaths(job, new Path(args[0]));
+>            FileOutputFormat.setOutputPath(job, new Path(args[1]));
 >         //提交job
 >         boolean result = job.waitForCompletion(true);
 >         System.exit(result?0:1);
@@ -273,3 +273,133 @@ job.waitForCompletion(true);
 > ```
 >
 > 
+
+
+
+## 再思考
+
+在Maven中package形成jar包，默认不会将第三方的依赖也注入。
+
+- java -jar
+
+在idea中能够运行是因为存在hadoop -client的依赖（本地模式，resourceManager没有记录）
+
+在本地模式下，整个MapReduce作业将在单个主机上运行，而不涉及整个Hadoop集群。这对于开发和调试MapReduce程序是非常方便的。
+
+- hadoop jar
+
+当使用hadoop jar 命令，hadoop安装目录中存在相关的依赖，因此可以正常执行，mapreduce程序会交给mapreduce进行计算，resourceManager中可以找到相关记录
+
+```sh
+hadoop jar yourmapreducejob.jar inputPath outputPath
+```
+
+在hadoop jar命令中路径默认是hdfs格式的
+
+```sh
+hdfs:///outputPath
+#可以写成如下格式，默认转为hdfs格式
+/outputPath
+```
+
+如果需要使用本地路径需要使用：
+
+```sh
+file:///outputPath
+```
+
+## 序列化/反序列化
+
+
+
+# MapReduce 原理
+
+## 计算向数据靠拢
+
+数据的移动需要大量的网络传输开销，尤其是在集群中，因此MapReduce会将Map程序就近地在HDFS数据所在的节点运行。
+
+## MapTask
+
+MapTask的个数决定了程序的并行度
+
+
+
+## 小文件处理
+
+## Split
+
+分片，Split是对block进行逻辑切分，并不会进行物理切分。如果输入存在多个文件，则split的过程是针对每个单独的文件进行的。
+
+
+
+# Shuffle
+
+Shuffle（洗牌）是指对Map任务输出的结果进行分区、排序、合并、归并并交给Reduce的过程
+
+## Map端Shuffle
+
+### 写入缓存
+
+每个MapTask都会被分配一个缓存，Map的输出结果并不是立即写入磁盘。而是首先写入缓存，在缓存中积累到一定的程度会一次性写入磁盘（减少IO资源的使用）
+
+
+
+### 溢写（Spill）
+
+缓存区的大小默认为100MB，随着MapTask的进行，缓存中的内容会不断增多，这时会启动溢写（**内容快溢出缓存的上限，而进行写出数据**）。为保证Map结果能够持续写入缓存（1一个MapTask只有1个缓冲区），当达到缓存的80%（默认比例）就会启动溢写。
+
+#### 排序
+
+MapTask最终的结果为一个大文件。如果直接将溢写结果原始输出将会得到这样的数据：
+
+
+
+<img src="assets/image-20231129200245286.png" alt="image-20231129200245286" style="zoom:33%;" />
+
+Spill原始的输出中，不同的Key随机分布在文件的不同的地方。因为Reduce需要对同1个Key执行一次reduce方法。因此Reduce需要从头开始搜索相应的key，且每一个reduce都需要这样。这样的效率是非常低下的
+
+这就引出的spill的排序：
+
+我们希望得到的大文件是有序的，这样Reduce只需要知道指定key的偏移量就可以结束读取
+
+<img src="assets/image-20231129201937547.png" alt="image-20231129201937547" style="zoom:33%;" />
+
+#### 分区
+
+Reduce服务器资源有限，一个ReduceTask必定会执行多个key相关的任务。一次reduce执行一个key的数据，如果每次只拉取一个key，则需要重复地从Map端拉取不同的key执行Reduce，这需要大量的网络IO资源
+
+我们希望reduce在拉取mapper的结果时一次性拉取多个不同的key，这样可以节省资源。
+
+多个不同的key就共同构成了一个分区（*Partitioner*）。每次Reduce拉取数据时以分区为单位
+
+相同的key的分区号是相同的（在其他的MapTask也相同）。默认的分区计算公式：$hash(key)mod R$，R为ReduceTask的数量
+
+因此我们可以先对数据进行分区，然后再进行分区内排序（相同key排在一起），得到一个有序的数据集：
+
+![image-20231129204237732](assets/image-20231129204237732.png)
+
+#### 归并
+
+将spill排序、分区后的磁盘上的文件，我们需要将其合并成一个文件
+
+最终生成一个存储在本地磁盘的大文件，这个文件中的数据是被分区的，不同的分区会被发送到不同的ReduceTask中。相同的分区会被送至同一个Reduce中
+
+当监测到一个MapTask任务完成后，会立即通知相关的ReduceTask来领取数据，然后在Reduce端执行Shuffle
+
+
+
+## Reduce 端Shuffle
+
+### Fetch
+
+Fetch领取，从MapTask所在节点拉取指定分区。一个分区中存在多个key相关的数据
+
+
+
+### 归并
+
+从Map端得到的数据会被存放至Reduce所在的缓存中，当达到缓存上限时也会触发溢写机制。在溢写的过程中
+
+会对来自不同map端的分区数据进行排序。由于在Map端已经对分区内的key进行了排序。因此归并排序的速度很快。最终形成一个大文件，大文件中相同key全部排序在了一起，相当于形成了`<key,List<value>>`的数据结构。
+
+排序后的文件在reduce端可以做到**高效率的写入**（判断key是否相等，即可知道该组key的范围）
