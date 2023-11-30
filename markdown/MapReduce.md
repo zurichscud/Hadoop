@@ -113,6 +113,15 @@ Hadoop中使用的是自己的数据类型，与Java中的类型的关系：
 | Array        | ArrayWritable         |
 | Null         | NullWritable          |
 
+## MapReduce过程
+
+1. **提交作业：** 客户端通过调用 `Job.waitForCompletion()` 提交 MapReduce 作业。这个调用触发了作业的提交，并将**作业的 Jar 文件和配置提交到 Hadoop 集群**上。
+2. **资源分配：** ResourceManager 负责作业的资源管理。它决定在哪些节点上启动任务（Map 和 Reduce 任务）。任务调度器将任务分配给可用的节点，考虑到节点的负载和数据分布。
+3. **任务启动：** 一旦任务被分配到节点，NodeManager 在该节点上启动相应的 Map 或 Reduce 任务。这些任务运行在 Hadoop 集群中的分布式环境中。
+4. **Map 阶段：** Map 任务处理输入数据并生成一系列键值对，然后将这些键值对按照键进行排序和分区。中间结果被写入磁盘以供 Reduce 阶段使用。
+5. **Shuffle 阶段：** Reduce 任务通过网络从所有 Map 任务节点拉取它们的中间结果。这个阶段包括数据的排序、分组和传输。
+6. **Reduce 阶段：** Reduce 任务按组处理中间键值对，并生成最终的输出。Reduce 任务的输出被写入指定的输出路径。
+
 # MapReduce 编程规范
 
 
@@ -135,7 +144,10 @@ new Path(path)
 
 本地路径格式：需要使用绝对路径，支持Windows和Linux的路径
 
-在不同的命令中，路径的默认转换会有不同，防止出错可以直接指定协议类型
+- 在java-jar中默认使用的是本地文件系统
+- 在hadoop jar中默认使用的是hdfs系统
+
+防止出错可以直接显式指定文件协议类型
 
 ## Mapper
 
@@ -280,13 +292,13 @@ job.waitForCompletion(true);
 
 在Maven中package形成jar包，默认不会将第三方的依赖也注入。
 
-- java -jar
+- `java -jar`
 
 在idea中能够运行是因为存在hadoop -client的依赖（本地模式，resourceManager没有记录）
 
 在本地模式下，整个MapReduce作业将在单个主机上运行，而不涉及整个Hadoop集群。这对于开发和调试MapReduce程序是非常方便的。
 
-- hadoop jar
+- `hadoop jar`
 
 当使用hadoop jar 命令，hadoop安装目录中存在相关的依赖，因此可以正常执行，mapreduce程序会交给mapreduce进行计算，resourceManager中可以找到相关记录
 
@@ -294,21 +306,209 @@ job.waitForCompletion(true);
 hadoop jar yourmapreducejob.jar inputPath outputPath
 ```
 
-在hadoop jar命令中路径默认是hdfs格式的
+## Writable
 
-```sh
-hdfs:///outputPath
-#可以写成如下格式，默认转为hdfs格式
-/outputPath
+在Hadoop中，序列化与反序列化采用的是自己的*Writeable*接口，而不使用Java的Serializable接口，因为Java的接口中存在较多的冗余信息，而在hadoop集群内进行通信，不需要那么多的安全机制。
+
+实现Writeable接口，并且重写序列化方法write，反序列化方法readField
+
+序列化和反序列化的顺序需要相同。例如：upFlow->downFlow->sumFlow
+
+```java
+    @Override
+    public void write(DataOutput dataOutput) throws IOException {
+        dataOutput.writeLong(upFlow);
+        dataOutput.writeLong(downFlow);
+        dataOutput.writeLong(sumFlow);
+
+    }
+
+    @Override
+    public void readFields(DataInput dataInput) throws IOException {
+        this.upFlow = dataInput.readLong();
+        this.downFlow = dataInput.readLong();
+        this.sumFlow = dataInput.readLong();
+
+    }
 ```
 
-如果需要使用本地路径需要使用：
 
-```sh
-file:///outputPath
+
+## Partitioner
+
+Partitioner主要用于自定义规则令相应的key进入相应的分区中
+
+### HashPartitioner
+
+默认的分区计算公式：$hash(key)mod R$，R为ReduceTask的数量。用户在默认模式下无法决定key存放在指定分区。
+
+分区号是从1开始的。
+
+### MyPartitioner
+
+我们继承`Partitioner`并重写 `getPartition()`
+
+```java
+abstract class Partitioner<KEY, VALUE> 
 ```
 
-## 序列化/反序列化
+- *KEY*，mapTask输出的key的类型
+- *VALUE*，mapTask输出的value的类型
+
+```java
+abstract int getPartition(KEY key, VALUE value, int numPartitions)
+```
+
+- `key`：待分区的key
+- `value`：待分区的value
+- `numPartitions`：分区的总数量
+- `Return`：*Int，*分区号
+
+
+
+注册分区规则：
+
+```java
+Job.setPartitionerClass(MyPartitioner.class)
+```
+
+设置分区数量：
+
+```java
+job.setNumReduceTasks(num)
+```
+
+- num：*Integer*，ReduceTask的数量
+
+---
+
+> Example：
+>
+> ```java
+> public class MyPartitioner extends Partitioner<Text,Flow> {
+>     @Override
+>     public int getPartition(Text text, Flow flow, int numPartitions) {
+>         String phone = text.toString();
+>         String prePhone = phone.substring(0, 3);
+>         int partition;
+>         switch (prePhone) {
+>             case "136":
+>                 partition = 0;
+>                 break;
+>             case "137":
+>                 partition = 1;
+>                 break;
+>             case "138":
+>                 partition = 2;
+>                 break;
+>             case "139":
+>                 partition = 3;
+>                 break;
+>             default:
+>                 partition = 4;
+>                 break;
+>         }
+>         return partition;
+> 
+>     }
+> 
+> ```
+>
+> 
+
+
+
+## WritableComparable
+
+在Hadoop的shuffle中需要对key进行排序（Map端快排，Reduce端归并排序）。因此shuffle的key必须是Comparable的
+
+
+
+WritableComparable需要实现Writeable相关的方法外，还需要实现Comparable有关的方法。即WritableComparable是Writeable和Comparable的共同得到的一个接口。
+
+WritableComparable存在泛型，为比较对象的种类
+
+```
+public class Flow  implements WritableComparable<Flow> 
+```
+
+需要实现`compareTo`方法
+
+```java
+    @Override
+    public int compareTo(Flow o) {
+        //总流量的倒序
+        if (this.sumFlow>o.sumFlow){
+            return -1;
+        } else if (this.sumFlow<o.sumFlow) {
+            return 1;
+        }else {
+            //根据upFlow进行正序排序
+            if (this.upFlow>o.upFlow){
+                return -1;
+            }
+            else if (this.upFlow<o.upFlow){
+                return 1;
+            }
+            else {
+                return 0;
+            }
+        }
+    }
+```
+
+## Combiner
+
+Combiner为Shuffle中可选的一个过程，Combiner位于Map端的Shuffle溢写的归并之后的过程
+
+Combiner是一种**局部聚合**（在分区内），因此他的父类为Reducer。
+
+```java
+<java,1>,<java,1>--><java,2>
+```
+
+```java
+job.setCombinerClass(MyCombiner.class)
+```
+
+```java
+public class WordCombiner extends Reducer<Text, IntWritable,Text,IntWritable> {
+    @Override
+    protected void reduce(Text key, Iterable<IntWritable> values, Reducer<Text, IntWritable, Text, IntWritable>.Context context) throws IOException, InterruptedException {
+        int sum=0;
+        for (IntWritable value : values) {
+            sum+=value.get();
+        }
+        IntWritable res = new IntWritable();
+        res.set(sum);
+        context.write(key,res);
+    }
+}
+```
+
+执行了Combiner后可以发现`Reduce Shuffle bytes`的大小减少了
+
+使用Combiner的前提是不影响MapReduce的逻辑（局部聚合后不影响Reducer阶段的逻辑，简单的判断方法就是如果Combiner和Reducer的reduce方法相同，就不会有影响）
+
+如果Combiner的逻辑与Reducer的逻辑相同，实际上可以不写Combiner类，直接使用Reducer的子类进行注册
+
+```java
+job.setCombinerClass(WordReducer.class)
+```
+
+## OutputFormat
+
+OutputFormat是抽象类。是MapReduce的输出基类。MapReduce默认的输出类是TextOutputFormat
+
+如果想要将结果的输出到指定文件，我们需要自定义FileOutputFormat的子类
+
+
+
+- 注册
+
+```java
+job.setOutputFormatClass(LogOutputFormat.class)
+```
 
 
 
@@ -320,17 +520,13 @@ file:///outputPath
 
 ## MapTask
 
-MapTask的个数决定了程序的并行度
+MapTask的个数决定了程序的并行度，MapTask的数量决定于Split分片的数量。
 
 
-
-## 小文件处理
 
 ## Split
 
 分片，Split是对block进行逻辑切分，并不会进行物理切分。如果输入存在多个文件，则split的过程是针对每个单独的文件进行的。
-
-
 
 # Shuffle
 
@@ -372,11 +568,15 @@ Reduce服务器资源有限，一个ReduceTask必定会执行多个key相关的�
 
 多个不同的key就共同构成了一个分区（*Partitioner*）。每次Reduce拉取数据时以分区为单位
 
-相同的key的分区号是相同的（在其他的MapTask也相同）。默认的分区计算公式：$hash(key)mod R$，R为ReduceTask的数量
+相同的key的分区号是相同的（在其他的MapTask也相同）。
 
 因此我们可以先对数据进行分区，然后再进行分区内排序（相同key排在一起），得到一个有序的数据集：
 
 ![image-20231129204237732](assets/image-20231129204237732.png)
+
+一个分区被一个Reduce处理，生成一个输出文件（*partXXX*）
+
+
 
 #### 归并
 
@@ -403,3 +603,80 @@ Fetch领取，从MapTask所在节点拉取指定分区。一个分区中存在�
 会对来自不同map端的分区数据进行排序。由于在Map端已经对分区内的key进行了排序。因此归并排序的速度很快。最终形成一个大文件，大文件中相同key全部排序在了一起，相当于形成了`<key,List<value>>`的数据结构。
 
 排序后的文件在reduce端可以做到**高效率的写入**（判断key是否相等，即可知道该组key的范围）
+
+
+
+# Join
+
+类似于Mysql中的join
+
+Mapper中的setup，每次切片（MapTask）将执行1次setup方法进行初始化
+
+## Reduce Join
+
+
+
+## Map Join
+
+可以使用 `java.io` 直接读取文件，而不必依赖 Hadoop 的文件系统和相关类。在这个特定的场景中，使用 Hadoop 的 `FileSystem` 和 `FSDataInputStream` 可能是因为你的数据可能分布在HDFS中，而 Hadoop 提供了方便的 API 用于处理这种情况。
+
+如果你的数据是本地文件系统中的常规文件，而不是分布式文件系统中的数据，那么你可以考虑使用 Java 标准库中的 `FileInputStream` 和 `BufferedReader`。
+
+
+
+为什么要在Main类添加本地文件？因为Main类是运行在客户端所在的当前节点上的，其他节点可能不存在该文件，如果在setup中读取本地文件，则指的是当前运行MapTask的节点的本机环境，很显然不存在该文件。
+
+
+
+
+
+
+
+*DistributedCache*
+
+**本地化缓存文件：** MapReduce任务可以通过分布式缓存（Distributed Cache）机制将小型文件（比如配置文件、字典文件等）本地化到任务节点。这些文件会在任务执行之前被复制到每个节点的本地文件系统中，从而减少任务在运行时对这些文件的访问成本。
+
+```java
+job.addCacheFile(new URI("file:///input/join/pd.txt"));
+```
+
+```java
+  /**
+   * 添加要本地化的缓存文件
+   * @param uri 要本地化的缓存文件的 URI
+   */
+  public void addCacheFile(URI uri) {
+    // 确保作业处于定义状态
+    ensureState(JobState.DEFINE);
+    
+    // 使用 DistributedCache.addCacheFile 方法将缓存文件添加到配置中
+    DistributedCache.addCacheFile(uri, conf);
+  }
+```
+
+---
+
+- **本地文件缓存（addCacheFile）：** 当缓存文件位于客户端当前运行的节点中，可以使用 `addCacheFile` 方法将缓存文件分发到所有 Map 任务的本地工作目录。这样，每个 Map 任务都可以访问这个本地缓存文件。这在一些场景下是比较适用的，尤其是当文件相对较小，可以被复制到每个节点而不引起太多开销时。
+
+```java
+javaCopy code// 示例代码
+job.addCacheFile(new URI("file:///path/to/local/cache/file.txt"));
+```
+
+- **HDFS 文件直接读取：** 如果缓存文件在 HDFS 中，你可以在 MapReduce 任务的 `setup` 方法中直接读取这个文件，而不需要使用 `addCacheFile`。因为 Hadoop 会自动将 HDFS 中的文件分发到所有节点。
+
+```java
+javaCopy code// 示例代码
+Path hdfsCacheFile = new Path("hdfs:///path/to/hdfs/cache/file.txt");
+FileSystem fs = FileSystem.get(context.getConfiguration());
+FSDataInputStream fis = fs.open(hdfsCacheFile);
+BufferedReader reader = new BufferedReader(new InputStreamReader(fis, StandardCharsets.UTF_8));
+
+// 逐行读取文件内容
+String line;
+while ((line = reader.readLine()) != null) {
+    // 处理每一行的逻辑
+}
+```
+
+总体而言，`addCacheFile` 适用于本地文件，而对于 HDFS 中的文件，你可以直接在 Map 任务的 `setup` 方法中读取它们，无需手动添加到缓存。

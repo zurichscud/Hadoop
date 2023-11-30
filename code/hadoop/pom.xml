@@ -42,7 +42,7 @@
                     <!-- 指定主类 -->
                     <archive>
                         <manifest>
-                            <mainClass>com.example.wordcount.WordMain</mainClass>
+                            <mainClass>com.example.join.Main</mainClass>
                         </manifest>
                     </archive>
                 </configuration>
