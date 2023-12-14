@@ -1,4 +1,8 @@
 #!/bin/bash
+#hadoop集群启动shell
+#如果第一次启动将不会对namenode进行format
+#master将启动hdfs，slave01启动yarn
+
 
 # 设置Hadoop安装目录
 HADOOP_HOME="/usr/local/hadoop-3.2.4"

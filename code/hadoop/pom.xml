@@ -42,7 +42,7 @@
                     <!-- 指定主类 -->
                     <archive>
                         <manifest>
-                            <mainClass>com.example.join.Main</mainClass>
+                            <mainClass>com.example.search.Main</mainClass>
                         </manifest>
                     </archive>
                 </configuration>

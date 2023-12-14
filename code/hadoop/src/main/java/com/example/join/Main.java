@@ -38,11 +38,10 @@ public class Main {
         job.setNumReduceTasks(0);
 
         // 6 设置输入输出路径
-        FileInputFormat.setInputPaths(job, new Path("/input/join/order.txt"));
-        FileOutputFormat.setOutputPath(job, new Path("/output/join"));
+        FileInputFormat.setInputPaths(job, new Path("file:///input/join/order.txt"));
+        FileOutputFormat.setOutputPath(job, new Path("file:///output/join"));
         // 7 提交
         boolean b = job.waitForCompletion(true);
         System.exit(b ? 0 : 1);
-
     }
 }
